@@ -167,7 +167,7 @@
       state: restarted
     with_items:
     - neutron-openvswitch-agent
-    when: revert or force_delete
+    when: revert
 
   - name: Restart nova services
     service:
@@ -175,4 +175,4 @@
       state: restarted
     with_items:
     - nova-compute
-    when: revert or force_delete
+    when: revert
