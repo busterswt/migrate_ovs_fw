@@ -1,0 +1,11 @@
+0a. Disable compute node from taking new instances
+0b. Backup Galera DB
+1. On a compute node, modify the firewall_driver from openvswitch to iptables_hybrid in ml2_conf.ini and openvswitch_agent.ini
+2. Find all ports on a given compute node whose ['binding:vif_details']['ovs_hybrid_plug'] is False
+3. Using the returned port IDs, remove the respective tap interface from the integration bridge
+4. For every port, update the 'ml2_port_bindings' table and modify 'vif_details' field changing 'ovs_hybrid_plug' from 'false' to 'true'
+5. Restart neutron-openvswitch-agent
+6. Restart nova-compute
+7. Verify qbr, qvb and qvo interfaces are created
+8. Iterate through the orphaned taps and put them in their respective bridge
+9. Enable compute node to take new instances
