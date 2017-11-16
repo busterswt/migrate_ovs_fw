@@ -64,34 +64,6 @@
       - "/etc/neutron/plugins/ml2/openvswitch_agent.ini"
     when: migrate
 
-#  - name: Gather instance taps from integration bridge
-#    shell: |
-#      ovs-vsctl list-ports br-int | grep tap | awk '{print $1}'
-#    register: tap_ports
-#    args:
-#      executable: /bin/bash
-#    when: migrate
-
-#  - name: Structure tap interfaces on bridge into list
-#    set_fact:
-#      taps_on_bridge: "{{ taps_on_bridge }} + [ '{{ item }}' ]"
-#    with_items:
-#    - "{{ tap_ports.stdout_lines }}"
-#    when: migrate
-
-#  - debug: var=taps_on_bridge
-
-#  - name: Unplug instance taps from integration bridge
-#    shell: |
-#      ovs-vsctl del-port br-int {{ item }}
-#    args:
-#      executable: /bin/bash
-#    with_items:
-#      taps_on_bridge
-#    when: migrate
-
-#  - debug: var=taps_on_bridge|length
-
   - name: Update ovs_hybrid_plug=true for respective Neutron ports in mysql
     shell: |
       mysql -u {{ mysql_user }} --password={{ mysql_pass }} -h {{ mysql_host }} -e "use neutron; update ml2_port_bindings set vif_details = '{\"port_filter\": true, \"ovs_hybrid_plug\": true}' where port_id='{{ item }}' limit 1;"
@@ -113,38 +85,3 @@
     with_items:
     - nova-compute
     when: migrate
-
-#  - name: Wait for respective qbr bridges to be built
-#    shell: |
-#      brctl show | grep {{ item[3:8] }} | awk '{print $1}'
-#    register: qbr_temp_list
-#    until: qbr_temp_list.stdout_lines|length == taps_on_bridge|length
-#    retries: 10
-#    delay: 30
-#    with_items:
-#    - taps_on_bridge
-#    when: migrate
-
-#  - name: Gather qbr bridges
-#    shell: |
-#      brctl show | grep qbr | awk '{print $1}'
-#    register: qbr_bridges
-#    args:
-#      executable: /bin/bash
-#    when: migrate
-
-#  - name: Structure brq interfaces into list
-#    set_fact:
-#      qbr_bridge_list: "{{ qbr_bridge_list }} + [ '{{ item }}' ]"
-#    with_items:
-#    - "{{ qbr_bridges.stdout_lines }}"
-#    when: migrate
-
-#  - debug: var=qbr_bridge_list
-
-#  - name: Iterate through the orphaned taps and put them in their respective bridge
-#    shell: |
-#      for portid in $(ip link show | grep tap | awk '{print substr($2, 4, length($2)-4)}')
-#        do brctl addif qbr$portid tap$portid
-#      done
-#    when: migrate
