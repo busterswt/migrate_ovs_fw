@@ -2,6 +2,14 @@
 
 The migrate.yml playbook can be used to migrate an environment from the `openvswitch` firewall driver to the `iptables_firewall` firewall driver in an OpenStack Newton OSA-based cloud.
 
+## What's implied
+
+We expect the following:
+
+1. An openrc file exists on every compute node in /root/openrc
+2. Every compute node has connectivity to the OpenStack VIP (including Galera)
+3. Every compute node has a venv with the neutron client available
+
 ## To execute:
 
 0. Backup the Neutron DB
