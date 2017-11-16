@@ -4,8 +4,8 @@
     set_fact:
       migrate: false
       mysql_user: "root"
-      mysql_pass: "9b70f3f9f79b7032d936b32943ce6c2400ca4fd3c679ddb00b42d3cc"
-      mysql_host: "172.29.236.100"
+      mysql_pass: "{{ galera_root_password }}"
+      mysql_host: "{{ internal_lb_vip_address }}"
       false_ports: []
 
   - name: Get OSA version
