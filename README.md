@@ -12,8 +12,6 @@ We expect the following:
 
 ## To execute:
 
-0. Backup the Neutron DB
-
 1. Copy migrate.yml to /opt/openstack-ansible/playbooks
 
 2. Stop all running instances on the given host
@@ -27,8 +25,6 @@ openstack-ansible migrate.yml --limit <host>
 4. Start instances on the given host
 
 ## To rollback:
-
-0. Backup the Neutron DB
 
 1. Stop all running instances on the given host
 
