@@ -2,7 +2,7 @@
 
 The migrate.yml playbook can be used to migrate an environment from the `openvswitch` firewall driver to the `iptables_firewall` firewall driver in an OpenStack Newton OSA-based cloud.
 
-##To execute:
+## To execute:
 
 0. Backup the Neutron DB
 
@@ -18,7 +18,7 @@ openstack-ansible migrate.yml --limit <host>
 
 4. Start instances on the given host
 
-##To rollback:
+## To rollback:
 
 0. Backup the Neutron DB
 
