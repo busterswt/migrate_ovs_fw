@@ -42,6 +42,16 @@
 
   - debug: var=revert
 
+  - name: Backup the Neutron DB
+    mysql_db:
+      state: dump
+      name: neutron
+      target: /tmp/neutron_revert_{{ lookup('pipe','date +%Y-%m-%d-%H-%M-%S') }}.sql
+      login_user: root
+      login_password: "{{ mysql_pass }}"
+      login_host: "{{ mysql_host }}"
+    when: revert
+
   - name: Stop neutron services
     service:
       name: "{{ item }}"
