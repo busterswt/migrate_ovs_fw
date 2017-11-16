@@ -3,10 +3,7 @@ The migrate.yml playbook can be used to migrate an environment from the `openvsw
 To execute:
 
 1. Copy migrate.yml to /opt/openstack-ansible/playbooks
-
-2. Execute the following: openstack-ansible migrate.yml --limit <host>
-
-Caveats:
-
-• It appears that rebooting an instance after the migration has occurred may cause the instance tap to move back to br-int. Working on confiming this behavior
-• The bridge check is not quite functional, so the playbook does not fully execute
+1a. Make any changes to vars for mysql bits
+2. Stop all running instances on the given host
+3. Execute the following: openstack-ansible migrate.yml --limit <host>
+4. Start instances on the given host
