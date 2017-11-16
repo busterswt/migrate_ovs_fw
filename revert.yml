@@ -1,0 +1,163 @@
+- hosts: compute_hosts
+  tasks:
+  - name: Initialize some variables
+    set_fact:
+      revert: false
+      mysql_user: "root"
+      mysql_pass: "9b70f3f9f79b7032d936b32943ce6c2400ca4fd3c679ddb00b42d3cc"
+      mysql_host: "172.29.236.100"
+      true_ports: []
+      qvos_on_bridge: []
+      qbr_bridge_list: []
+      force_delete: false
+
+  - name: Gather instances from virsh
+    shell: |
+      virsh -q list
+    register: running_instances
+
+  - name: Check for running instances
+    fail: msg="Please stop all running instances on this node"
+    when: running_instances.stdout_lines|length > 0
+
+  - name: Find all ports on a given compute node
+    shell: |
+      source /root/openrc
+      /openstack/venvs/neutron-14.2.11/bin/neutron port-list --binding:host_id='{{container_name}}' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
+    register: compute_ports_json
+    args:
+      executable: /bin/bash
+
+  - name: Find all ports on a given compute node whose ovs_hybrid_plug=true
+    set_fact:
+      true_ports: "{{ true_ports }} + [ '{{ item['id'] }}' ]"
+    when: item['binding:vif_details']['ovs_hybrid_plug']
+    with_items:
+      - "{{ compute_ports_json.stdout|from_json }}"
+
+  - name: Determine whether we need to revert on this host
+    set_fact:
+      "revert": true
+    when: true_ports|length > 0
+
+  - debug: var=revert
+
+  - name: Stop neutron services
+    service:
+      name: "{{ item }}"
+      state: stopped
+    with_items:
+    - neutron-openvswitch-agent
+    when: revert
+
+  - name: Stop nova services
+    service:
+      name: "{{ item }}"
+      state: stopped
+    with_items:
+    - nova-compute
+    when: revert
+
+  - name: Replace firewall driver in config files
+    lineinfile: dest={{ item }} regexp='^firewall_driver' line='firewall_driver = openvswitch'
+    with_items:
+      - "/etc/neutron/plugins/ml2/ml2_conf.ini"
+      - "/etc/neutron/plugins/ml2/openvswitch_agent.ini"
+    when: revert
+
+  - name: Update ovs_hybrid_plug=false for respective Neutron ports in mysql
+    shell: |
+      mysql -u {{ mysql_user }} --password={{ mysql_pass }} -h {{ mysql_host }} -e "use neutron; update ml2_port_bindings set vif_details = '{\"port_filter\": true, \"ovs_hybrid_plug\": false}' where port_id='{{ item }}' limit 1;"
+    with_items: true_ports
+    when: revert
+
+  - name: Start nova services
+    delay: 10
+    service:
+      name: "{{ item }}"
+      state: restarted
+    with_items:
+    - nova-compute
+    when: revert
+
+  - name: Gather qvo from integration bridge
+    shell: |
+      ovs-vsctl list-ports br-int | grep qvo | awk '{print $1}'
+    register: qvo_ports
+    args:
+      executable: /bin/bash
+    when: revert or force_delete
+
+  - name: Structure qvo interfaces on bridge into list
+    set_fact:
+      qvos_on_bridge: "{{ qvos_on_bridge }} + [ '{{ item }}' ]"
+    with_items:
+    - "{{ qvo_ports.stdout_lines }}"
+    when: revert or force_delete
+
+  - name: Unplug qvo interfaces from integration bridge
+    shell: |
+      ovs-vsctl del-port br-int {{ item }}
+    args:
+      executable: /bin/bash
+    with_items:
+      qvos_on_bridge
+    when: revert or force_delete
+
+  - name: Delete qvo/qvb veths
+    shell: |
+      ip link delete {{ item }}
+    args:
+      executable: /bin/bash
+    with_items:
+      qvos_on_bridge
+    when: revert or force_delete
+
+  - name: Gather qbr bridges
+    shell: |
+      brctl show | grep qbr | awk '{print $1}'
+    register: qbr_bridges
+    args:
+      executable: /bin/bash
+    when: revert or force_delete
+
+  - name: Structure brq interfaces into list
+    set_fact:
+      qbr_bridge_list: "{{ qbr_bridge_list }} + [ '{{ item }}' ]"
+    with_items:
+    - "{{ qbr_bridges.stdout_lines }}"
+    when: revert or force_delete
+
+  - name: Set qbr bridges down
+    shell: |
+      ip link set {{ item }} down
+    args:
+      executable: /bin/bash
+    with_items:
+      qbr_bridge_list
+    when: revert or force_delete
+
+  - name: Delete qbr bridges
+    shell: |
+      ip link delete {{ item }}
+    args:
+      executable: /bin/bash
+    with_items:
+      qbr_bridge_list
+    when: revert or force_delete
+
+  - name: Start neutron services
+    service:
+      name: "{{ item }}"
+      state: restarted
+    with_items:
+    - neutron-openvswitch-agent
+    when: revert or force_delete
+
+  - name: Restart nova services
+    service:
+      name: "{{ item }}"
+      state: restarted
+    with_items:
+    - nova-compute
+    when: revert or force_delete
