@@ -10,16 +10,19 @@
       taps_on_bridge: []
       qbr_bridge_list: []
 
-  - name: Replace firewall driver in config files
-    lineinfile: dest={{ item }} regexp='^firewall_driver' line='firewall_driver = iptables_hybrid'
-    with_items:
-      - "/etc/neutron/plugins/ml2/ml2_conf.ini"
-      - "/etc/neutron/plugins/ml2/openvswitch_agent.ini"
+  - name: Gather instances from virsh
+    shell: |
+      virsh -q list
+    register: running_instances
+
+  - name: Check for running instances
+    fail: msg="Please stop all running instances on this node"
+    when: running_instances.stdout_lines|length > 0
 
   - name: Find all ports on a given compute node
     shell: |
       source /root/openrc
-      /openstack/venvs/neutron-14.2.11/bin/neutron port-list --binding:host_id='osa-newton-ovs' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
+      /openstack/venvs/neutron-14.2.11/bin/neutron port-list --binding:host_id='{{container_name}}' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
     register: compute_ports_json
     args:
       executable: /bin/bash
@@ -31,8 +34,6 @@
     with_items:
       - "{{ compute_ports_json.stdout|from_json }}"
 
-  - debug: var=false_ports
-
   - name: Determine whether we need to migrate on this host
     set_fact:
       "migrate": true
@@ -40,33 +41,56 @@
 
   - debug: var=migrate
 
-  - name: Gather instance taps from integration bridge
-    shell: |
-      ovs-vsctl list-ports br-int | grep tap | awk '{print $1}'
-    register: tap_ports
-    args:
-      executable: /bin/bash
-    when: migrate
-
-  - name: Structure tap interfaces on bridge into list
-    set_fact:
-      taps_on_bridge: "{{ taps_on_bridge }} + [ '{{ item }}' ]"
+  - name: Stop neutron services
+    service:
+      name: "{{ item }}"
+      state: stopped
     with_items:
-    - "{{ tap_ports.stdout_lines }}"
+    - neutron-openvswitch-agent
     when: migrate
 
-  - debug: var=taps_on_bridge
-
-  - name: Unplug instance taps from integration bridge
-    shell: |
-      ovs-vsctl del-port br-int {{ item }}
-    args:
-      executable: /bin/bash
+  - name: Stop nova services
+    service:
+      name: "{{ item }}"
+      state: stopped
     with_items:
-      taps_on_bridge
+    - nova-compute
     when: migrate
 
-  - debug: var=taps_on_bridge|length
+  - name: Replace firewall driver in config files
+    lineinfile: dest={{ item }} regexp='^firewall_driver' line='firewall_driver = iptables_hybrid'
+    with_items:
+      - "/etc/neutron/plugins/ml2/ml2_conf.ini"
+      - "/etc/neutron/plugins/ml2/openvswitch_agent.ini"
+    when: migrate
+
+#  - name: Gather instance taps from integration bridge
+#    shell: |
+#      ovs-vsctl list-ports br-int | grep tap | awk '{print $1}'
+#    register: tap_ports
+#    args:
+#      executable: /bin/bash
+#    when: migrate
+
+#  - name: Structure tap interfaces on bridge into list
+#    set_fact:
+#      taps_on_bridge: "{{ taps_on_bridge }} + [ '{{ item }}' ]"
+#    with_items:
+#    - "{{ tap_ports.stdout_lines }}"
+#    when: migrate
+
+#  - debug: var=taps_on_bridge
+
+#  - name: Unplug instance taps from integration bridge
+#    shell: |
+#      ovs-vsctl del-port br-int {{ item }}
+#    args:
+#      executable: /bin/bash
+#    with_items:
+#      taps_on_bridge
+#    when: migrate
+
+#  - debug: var=taps_on_bridge|length
 
   - name: Update ovs_hybrid_plug=true for respective Neutron ports in mysql
     shell: |
@@ -74,7 +98,7 @@
     with_items: false_ports
     when: migrate
 
-  - name: Restart neutron services
+  - name: Start neutron services
     service:
       name: "{{ item }}"
       state: restarted
@@ -82,7 +106,7 @@
     - neutron-openvswitch-agent
     when: migrate
 
-  - name: Restart nova services
+  - name: Start nova services
     service:
       name: "{{ item }}"
       state: restarted
@@ -90,33 +114,33 @@
     - nova-compute
     when: migrate
 
-  - name: Wait for respective qbr bridges to be built
-    shell: |
-      brctl show | grep {{ item[3:8] }} | awk '{print $1}'
-    register: qbr_temp_list
-    until: qbr_temp_list.stdout_lines|length == taps_on_bridge|length
-    retries: 10
-    delay: 30
-    with_items:
-    - taps_on_bridge
-    when: migrate
+#  - name: Wait for respective qbr bridges to be built
+#    shell: |
+#      brctl show | grep {{ item[3:8] }} | awk '{print $1}'
+#    register: qbr_temp_list
+#    until: qbr_temp_list.stdout_lines|length == taps_on_bridge|length
+#    retries: 10
+#    delay: 30
+#    with_items:
+#    - taps_on_bridge
+#    when: migrate
 
-  - name: Gather qbr bridges
-    shell: |
-      brctl show | grep qbr | awk '{print $1}'
-    register: qbr_bridges
-    args:
-      executable: /bin/bash
-    when: migrate
+#  - name: Gather qbr bridges
+#    shell: |
+#      brctl show | grep qbr | awk '{print $1}'
+#    register: qbr_bridges
+#    args:
+#      executable: /bin/bash
+#    when: migrate
 
-  - name: Structure brq interfaces into list
-    set_fact:
-      qbr_bridge_list: "{{ qbr_bridge_list }} + [ '{{ item }}' ]"
-    with_items:
-    - "{{ qbr_bridges.stdout_lines }}"
-    when: migrate
+#  - name: Structure brq interfaces into list
+#    set_fact:
+#      qbr_bridge_list: "{{ qbr_bridge_list }} + [ '{{ item }}' ]"
+#    with_items:
+#    - "{{ qbr_bridges.stdout_lines }}"
+#    when: migrate
 
-  - debug: var=qbr_bridge_list
+#  - debug: var=qbr_bridge_list
 
 #  - name: Iterate through the orphaned taps and put them in their respective bridge
 #    shell: |
