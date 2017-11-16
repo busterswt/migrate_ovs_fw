@@ -8,6 +8,11 @@
       mysql_host: "172.29.236.100"
       false_ports: []
 
+  - name: Get OSA version
+    shell: |
+      grep -oP 'DISTRIB_RELEASE="\K[^"]+' /etc/openstack-release
+    register: osa_version
+
   - name: Gather instances from virsh
     shell: |
       virsh -q list
@@ -20,7 +25,7 @@
   - name: Find all ports on a given compute node
     shell: |
       source /root/openrc
-      /openstack/venvs/neutron-14.2.11/bin/neutron port-list --binding:host_id='{{container_name}}' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
+      /openstack/venvs/neutron-{{ osa_version.stdout }}/bin/neutron port-list --binding:host_id='{{container_name}}' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
     register: compute_ports_json
     args:
       executable: /bin/bash
