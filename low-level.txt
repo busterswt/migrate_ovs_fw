@@ -1,0 +1,118 @@
+0a. Disable compute node from taking new instances
+
+0b. ??
+
+1.On a compute node, modify the firewall_driver from openvswitch to iptables_hybrid in ml2_conf.ini and openvswitch_agent.ini
+
+cd /opt/openstack-ansible/playbooks
+ansible aio1 -m shell -a "sed -i 's/firewall_driver = openvswitch/firewall_driver = iptables_hybrid/' /etc/neutron/plugins/ml2/ml2_conf.ini"
+ansible aio1 -m shell -a "sed -i 's/firewall_driver = openvswitch/firewall_driver = iptables_hybrid/' /etc/neutron/plugins/ml2/openvswitch_agent.ini"
+
+
+2. Find all ports on a given compute node whose ['binding:vif_details']['ovs_hybrid_plug'] is False
+
+root@aio1-utility-container-3b5f2e9b:~# neutron port-list --device_owner='compute:nova' -c 'id' -c 'binding:host_id' -c 'binding:vif_details'
++--------------------------------------+--------------------------+---------------------------------------------------+
+| id                                   | binding:host_id          | binding:vif_details                               |
++--------------------------------------+--------------------------+---------------------------------------------------+
+| 19ef3426-367e-48ff-bb81-b1b44df0d599 | osa-newton-ovs-compute01 | {u'port_filter': True, u'ovs_hybrid_plug': True}  |
+| 3c94bb1a-a1db-453a-b363-2a41c0a07cc6 | osa-newton-ovs           | {u'port_filter': True, u'ovs_hybrid_plug': False} |
+| 55a36682-7d78-47ca-a4f9-057c44afe384 | osa-newton-ovs           | {u'port_filter': True, u'ovs_hybrid_plug': False} |
+| 56dd7eed-f093-4efc-9523-5ba90dfd5229 | osa-newton-ovs           | {u'port_filter': True, u'ovs_hybrid_plug': False} |
+| 5f03424d-1cab-4bc3-98bd-c42f94bef05a | osa-newton-ovs-compute01 | {u'port_filter': True, u'ovs_hybrid_plug': True}  |
+| b8051da9-6049-4a51-abbe-9a2366b3a0fe | osa-newton-ovs-compute01 | {u'port_filter': True, u'ovs_hybrid_plug': True}  |
++--------------------------------------+--------------------------+---------------------------------------------------+
+
+AIO:
+
+root@aio1-utility-container-3b5f2e9b:~# neutron port-list --binding:host_id='osa-newton-ovs' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' | grep 'False'
+| 3c94bb1a-a1db-453a-b363-2a41c0a07cc6 | osa-newton-ovs  | {u'port_filter': True, u'ovs_hybrid_plug': False} |
+| 55a36682-7d78-47ca-a4f9-057c44afe384 | osa-newton-ovs  | {u'port_filter': True, u'ovs_hybrid_plug': False} |
+| 56dd7eed-f093-4efc-9523-5ba90dfd5229 | osa-newton-ovs  | {u'port_filter': True, u'ovs_hybrid_plug': False} |
+
+Compute01:
+
+root@aio1-utility-container-3b5f2e9b:~# neutron port-list --binding:host_id='osa-newton-ovs-compute01' -c 'id' -c 'device_id' -c 'binding:vif_details' | grep 'False'
+root@aio1-utility-container-3b5f2e9b:~#
+
+3. Using the returned port IDs, remove the respective tap interface from the integration bridge
+
+# List ports on br-int
+source ~/openrc
+cd /opt/openstack-ansible/playbooks
+ansible aio1 -m shell -a 'ovs-vsctl list-ports br-int | grep tap'
+
+# Build an array of ports
+PORTS=()
+for port in $(/openstack/venvs/neutron-14.2.11/bin/neutron port-list --binding:host_id='osa-newton-ovs' -c 'id' -c 'device_id' -c 'binding:vif_details' | grep 'False' | awk '{print $2}')
+  do PORTS+=($port)
+done
+
+## Loops thru the array and run the ansible stuff to pull it from the bridge
+for i in "${PORTS[@]}"
+do
+   echo $i
+   PORTSUB=$(echo $i | awk '{print substr($1, 1, 11)}')
+   COMMAND="ovs-vsctl del-port br-int tap$PORTSUB"
+   echo "ansible aio1 -m shell -a '$COMMAND'" | bash
+done
+
+## Validate the integration bridge is empty of taps
+ansible aio1 -m shell -a 'ovs-vsctl list-ports br-int'
+
+4. For every port, update the 'ml2_port_bindings' table and modify 'vif_details' field changing 'ovs_hybrid_plug' from 'false' to 'true'
+
+From the Utility container:
+
+source ~/openrc
+
+# Build an array of ports
+PORTS=()
+for port in $(neutron port-list --binding:host_id='osa-newton-ovs' -c 'id' -c 'device_id' -c 'binding:vif_details' | grep 'True' | awk '{print $2}')
+  do PORTS+=($port)
+done
+
+# Do the needful in Galera
+for i in "${PORTS[@]}"
+do
+   echo $i
+   mysql -e "use neutron; update ml2_port_bindings set vif_details = '{\"port_filter\": true, \"ovs_hybrid_plug\": false}' where port_id='$i' limit 1;"
+done
+
+# Confirm no False ports on this compute
+root@aio1-utility-container-3b5f2e9b:~# neutron port-list --binding:host_id='osa-newton-ovs' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' | grep 'False'
+root@aio1-utility-container-3b5f2e9b:~#
+
+5. Restart neutron-openvswitch-agent
+
+From deploy node:
+
+cd /opt/openstack-ansible/playbooks
+ansible aio1 -m shell -a 'service neutron-openvswitch-agent restart'
+
+6. Restart nova-compute
+
+cd /opt/openstack-ansible/playbooks
+ansible aio1 -m shell -a 'service nova-compute restart'
+
+7. Verify qbr, qvb and qvo interfaces are created
+
+cd /opt/openstack-ansible/playbooks
+ansible aio1 -m shell -a 'brctl show | grep qbr'
+
+aio1 | SUCCESS | rc=0 >>
+qbr3c94bb1a-a1		8000.761b83abeda8	no		qvb3c94bb1a-a1
+qbr55a36682-7d		8000.a2f05e32e26f	no		qvb55a36682-7d
+qbr56dd7eed-f0		8000.1eb915de0194	no		qvb56dd7eed-f0
+
+ansible aio1 -m shell -a 'ovs-vsctl list-ports br-int | grep qvo'
+
+aio1 | SUCCESS | rc=0 >>
+qvo3c94bb1a-a1
+qvo55a36682-7d
+qvo56dd7eed-f0
+
+8. Iterate through the orphaned taps and put them in their respective bridge
+
+cd /opt/openstack-ansible/playbooks
+ansible aio1 -m shell -a "for portid in $(ip link show | grep tap | awk '{print substr($2, 4, length($2)-4)}'); do brctl addif qbr$portid tap$portid; done'"
