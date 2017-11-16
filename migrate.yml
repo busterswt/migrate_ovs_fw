@@ -1,0 +1,126 @@
+- hosts: compute_hosts
+  tasks:
+  - name: Initialize some variables
+    set_fact:
+      migrate: false
+      mysql_user: "root"
+      mysql_pass: "9b70f3f9f79b7032d936b32943ce6c2400ca4fd3c679ddb00b42d3cc"
+      mysql_host: "172.29.236.100"
+      false_ports: []
+      taps_on_bridge: []
+      qbr_bridge_list: []
+
+  - name: Replace firewall driver in config files
+    lineinfile: dest={{ item }} regexp='^firewall_driver' line='firewall_driver = iptables_hybrid'
+    with_items:
+      - "/etc/neutron/plugins/ml2/ml2_conf.ini"
+      - "/etc/neutron/plugins/ml2/openvswitch_agent.ini"
+
+  - name: Find all ports on a given compute node
+    shell: |
+      source /root/openrc
+      /openstack/venvs/neutron-14.2.11/bin/neutron port-list --binding:host_id='osa-newton-ovs' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
+    register: compute_ports_json
+    args:
+      executable: /bin/bash
+
+  - name: Find all ports on a given compute node whose ovs_hybrid_plug=false
+    set_fact:
+      false_ports: "{{ false_ports }} + [ '{{ item['id'] }}' ]"
+    when: not item['binding:vif_details']['ovs_hybrid_plug']
+    with_items:
+      - "{{ compute_ports_json.stdout|from_json }}"
+
+  - debug: var=false_ports
+
+  - name: Determine whether we need to migrate on this host
+    set_fact:
+      "migrate": true
+    when: false_ports|length > 0
+
+  - debug: var=migrate
+
+  - name: Gather instance taps from integration bridge
+    shell: |
+      ovs-vsctl list-ports br-int | grep tap | awk '{print $1}'
+    register: tap_ports
+    args:
+      executable: /bin/bash
+    when: migrate
+
+  - name: Structure tap interfaces on bridge into list
+    set_fact:
+      taps_on_bridge: "{{ taps_on_bridge }} + [ '{{ item }}' ]"
+    with_items:
+    - "{{ tap_ports.stdout_lines }}"
+    when: migrate
+
+  - debug: var=taps_on_bridge
+
+  - name: Unplug instance taps from integration bridge
+    shell: |
+      ovs-vsctl del-port br-int {{ item }}
+    args:
+      executable: /bin/bash
+    with_items:
+      taps_on_bridge
+    when: migrate
+
+  - debug: var=taps_on_bridge|length
+
+  - name: Update ovs_hybrid_plug=true for respective Neutron ports in mysql
+    shell: |
+      mysql -u {{ mysql_user }} --password={{ mysql_pass }} -h {{ mysql_host }} -e "use neutron; update ml2_port_bindings set vif_details = '{\"port_filter\": true, \"ovs_hybrid_plug\": true}' where port_id='{{ item }}' limit 1;"
+    with_items: false_ports
+    when: migrate
+
+  - name: Restart neutron services
+    service:
+      name: "{{ item }}"
+      state: restarted
+    with_items:
+    - neutron-openvswitch-agent
+    when: migrate
+
+  - name: Restart nova services
+    service:
+      name: "{{ item }}"
+      state: restarted
+    with_items:
+    - nova-compute
+    when: migrate
+
+  - name: Wait for respective qbr bridges to be built
+    shell: |
+      brctl show | grep {{ item[3:8] }} | awk '{print $1}'
+    register: qbr_temp_list
+    until: qbr_temp_list.stdout_lines|length == taps_on_bridge|length
+    retries: 10
+    delay: 30
+    with_items:
+    - taps_on_bridge
+    when: migrate
+
+  - name: Gather qbr bridges
+    shell: |
+      brctl show | grep qbr | awk '{print $1}'
+    register: qbr_bridges
+    args:
+      executable: /bin/bash
+    when: migrate
+
+  - name: Structure brq interfaces into list
+    set_fact:
+      qbr_bridge_list: "{{ qbr_bridge_list }} + [ '{{ item }}' ]"
+    with_items:
+    - "{{ qbr_bridges.stdout_lines }}"
+    when: migrate
+
+  - debug: var=qbr_bridge_list
+
+#  - name: Iterate through the orphaned taps and put them in their respective bridge
+#    shell: |
+#      for portid in $(ip link show | grep tap | awk '{print substr($2, 4, length($2)-4)}')
+#        do brctl addif qbr$portid tap$portid
+#      done
+#    when: migrate
