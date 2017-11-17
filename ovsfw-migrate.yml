@@ -1,3 +1,20 @@
+---
+# Copyright 2017, Rackspace US, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# (c) 2017, James Denton <james.denton@rackspace.com>
+
 - hosts: compute_hosts
   tasks:
   - name: Initialize some variables
@@ -31,24 +48,24 @@
       executable: /bin/bash
 
   - name: Find all ports on a given compute node whose ovs_hybrid_plug=false
-    set_fact:
+    set_fact: 
       false_ports: "{{ false_ports }} + [ '{{ item['id'] }}' ]"
     when: not item['binding:vif_details']['ovs_hybrid_plug']
-    with_items:
+    with_items: 
       - "{{ compute_ports_json.stdout|from_json }}"
 
   - name: Determine whether we need to migrate on this host
-    set_fact:
+    set_fact: 
       "migrate": true
     when: false_ports|length > 0
 
   - debug: var=migrate
 
   - name: Backup the Neutron DB
-    mysql_db:
-      state: dump
-      name: neutron
-      target: /tmp/neutron_migrate_{{ lookup('pipe','date +%Y-%m-%d-%H-%M-%S') }}.sql
+    mysql_db: 
+      state: dump 
+      name: neutron 
+      target: /tmp/neutron_{{ lookup('pipe','date +%Y-%m-%d-%H-%M-%S') }}.sql
       login_user: root
       login_password: "{{ mysql_pass }}"
       login_host: "{{ mysql_host }}"

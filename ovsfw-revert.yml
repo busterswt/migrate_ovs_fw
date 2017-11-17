@@ -1,3 +1,20 @@
+---
+# Copyright 2017, Rackspace US, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# (c) 2017, James Denton <james.denton@rackspace.com>
+
 - hosts: compute_hosts
   tasks:
   - name: Initialize some variables
@@ -28,20 +45,20 @@
   - name: Find all ports on a given compute node
     shell: |
       source /root/openrc
-      /openstack/venvs/neutron-{{ osa_version.stdout }}/bin/neutron port-list --binding:host_id='{{container_name}}' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
+      /openstack/venvs/neutron-14.2.11/bin/neutron port-list --binding:host_id='{{container_name}}' -c 'id' -c 'binding:host_id' -c 'binding:vif_details' -f json
     register: compute_ports_json
     args:
       executable: /bin/bash
 
   - name: Find all ports on a given compute node whose ovs_hybrid_plug=true
-    set_fact:
+    set_fact: 
       true_ports: "{{ true_ports }} + [ '{{ item['id'] }}' ]"
     when: item['binding:vif_details']['ovs_hybrid_plug']
-    with_items:
+    with_items: 
       - "{{ compute_ports_json.stdout|from_json }}"
 
   - name: Determine whether we need to revert on this host
-    set_fact:
+    set_fact: 
       "revert": true
     when: true_ports|length > 0
 
