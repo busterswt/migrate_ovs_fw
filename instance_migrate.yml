@@ -1,0 +1,167 @@
+---
+# Copyright 2017, Rackspace US, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# (c) 2017, James Denton <james.denton@rackspace.com>
+
+- hosts: compute_hosts
+
+  pre_tasks:
+  - name: Get OSA version
+    shell: |
+      grep -oP 'DISTRIB_RELEASE="\K[^"]+' /etc/openstack-release
+    register: osa_version
+
+  - name: Check to see if we have a starting list of instances on the targeted compute node
+    local_action: stat path=/tmp/{{container_name}}_start.txt
+    register: compute_instance_file
+
+#  - name: Fail playbook run if instance file exists
+#    fail: msg='A file exists for targeted compute node. Please delete the file {{ compute_instance_file.stat.path }} before proceeding.'
+#    when: compute_instance_file.stat.exists
+
+  - name: Grab service list
+    shell: |
+      source /root/openrc
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack compute service list --host {{ container_name }} --service nova-compute -f json
+    register: service_list_output
+    args:
+      executable: /bin/bash
+
+  - name: Determine service status for host
+    set_fact:
+      service_status: "{{ item['Status'] }}"
+    with_items:
+      - "{{ service_list_output.stdout|from_json }}"
+  
+  tasks:
+  - name: Remove host from Nova scheduler
+    shell: |
+      source /root/openrc
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack compute service set --disable --disable-reason "Maintenance" '{{container_name}}' nova-compute
+    when: service_status == 'enabled'
+    args:
+      executable: /bin/bash
+
+  - name: Load starting instances in memory
+    set_fact:
+      starting_instances_json: "{{ lookup('file','/tmp/{{container_name}}_start.txt') |from_json }}"
+    when: compute_instance_file.stat.exists
+
+  - name: Find current instances on a given compute node
+    shell: |
+      source /root/openrc
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack server list --host '{{container_name}}' -f json
+    register: current_instances_json
+    args:
+      executable: /bin/bash
+
+  - debug: var=current_instances_json
+
+  - name: Load current instances into starting instances (if needed)
+    set_fact:
+      starting_instances_json: "{{ current_instances_json }}"
+    when: not compute_instance_file.stat.exists
+
+  - name: Write current instances on compute node to file (if it doesn't exist)
+    local_action: copy content={{ current_instances_json.stdout|from_json }} dest=/tmp/{{container_name}}_start.txt
+    when: not compute_instance_file.stat.exists
+
+  - name: Structure current instances into list
+    set_fact:
+      current_instances: "{{ current_instances|default([]) + [ item['ID'] ] }}"
+    with_items:
+    - "{{ current_instances_json.stdout|from_json }}"
+
+  - debug: var=current_instances
+
+  - name: Structure starting instances into list
+    set_fact:
+      starting_instances: "{{ starting_instances|default([]) + [ item['ID'] ] }}"
+    with_items:
+    - "{{ starting_instances_json }}"
+
+  - debug: var=starting_instances
+
+  - name: Migrate instances away from host
+    shell: |
+      source /root/openrc
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/nova host-servers-migrate {{container_name}}
+    args:
+      executable: /bin/bash
+
+  - name: Wait for instances to be migrated off
+    shell: |
+      source /root/openrc
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack server list --host '{{container_name}}' -f json
+    register: remaining_instances_json
+    until: remaining_instances_json.stdout|length <= 2
+    retries: 12
+    delay: 10
+    args:
+      executable: /bin/bash
+
+  - name: Gather migrated instance details
+    shell: | 
+      source /root/openrc
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack server show {{ item }} -c 'id' -c 'OS-EXT-SRV-ATTR:host' -c 'status' -f json
+    register: migrated_instances_show_json   
+    args:
+      executable: /bin/bash
+    with_items:
+    - "{{ starting_instances }}"
+
+#  - debug: var=migrated_instances_show_json.results
+
+  - name: Iterate thru starting instance details
+    set_fact:
+      migrated_instances_show_item: "{{ migrated_instances_show_item|default([]) + [ item['stdout']|from_json ] }}"
+    with_items:
+    - "{{ migrated_instances_show_json.results }}"
+
+  - debug: var=migrated_instances_show_item
+
+  - name: Determine instances in a VERIFY_RESIZE state
+    set_fact:
+      verify_instances_list: "{{ verify_instances_list|default([]) + [ item['id'] ] }}"
+    with_items:
+    - "{{ migrated_instances_show_item }}"
+    when: item['status'] == "VERIFY_RESIZE"
+
+  - debug: var=verify_instances_list
+
+  - name: Determine instances in an ERROR state
+    set_fact:
+      error_instances_list: "{{ error_instances_list|default([]) + [ item['id'] ] }}"
+    with_items:
+    - "{{ migrated_instances_show_item }}"
+    when: item['status'] == "ERROR"
+
+  - debug: var=error_instances_list
+
+#  - name: Verify resize for migrated instances
+#    shell: |
+#      source /root/openrc
+#      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack server resize --confirm {{ item }}
+#    args:
+#      executable: /bin/bash
+#    with_items:
+#    - "{{ verify_instances_list }}"
+
+#  - name: Add host to Nova scheduler
+#    shell: |
+#      source /root/openrc
+#      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack compute service set --enable '{{ container_name }}' nova-compute
+#    args:
+#      executable: /bin/bash
