@@ -17,16 +17,15 @@
 
 - hosts: compute_hosts
   tasks:
-  - name: Initialize some variables
-    set_fact:
-      active_instances: []
-      taps_on_bridge: []
-      qbr_bridge_list: []
 
   - name: Get OSA version
     shell: |
       grep -oP 'DISTRIB_RELEASE="\K[^"]+' /etc/openstack-release
     register: osa_version
+
+  - name: Check to see if we have a starting list of instances on the targeted compute node
+    local_action: stat path=/root/{{container_name}}_active.txt
+    register: compute_instance_file
 
   - name: Find all active instances on a given compute node
     shell: |
@@ -38,12 +37,13 @@
 
   - name: Structure instances into list
     set_fact:
-      active_instances: "{{ active_instances }} + [ '{{ item['ID'] }}' ]"
+      active_instances: "{{ active_instances|default([]) }} + [ '{{ item['ID'] }}' ]"
     with_items:
     - "{{ active_instances_json.stdout|from_json }}"
 
   - name: Write active instances to file
-    local_action: copy content={{ active_instances_json.stdout|from_json }} dest=/tmp/{{container_name}}_active.txt
+    local_action: copy content={{ active_instances_json.stdout|from_json }} dest=/root/{{container_name}}_active.txt
+    when: not compute_instance_file.stat.exists
 
   - name: Shutdown active instances on given compute node
     shell: |

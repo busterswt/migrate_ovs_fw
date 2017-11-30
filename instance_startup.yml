@@ -19,8 +19,7 @@
   tasks:
   - name: Initialize some variables
     set_fact:
-      active_instances: []
-      active_instances_json: "{{ lookup('file','/tmp/{{container_name}}_active.txt') |from_json }}"
+      active_instances_json: "{{ lookup('file','/root/{{container_name}}_active.txt') |from_json }}"
 
   - name: Get OSA version
     shell: |
@@ -29,7 +28,7 @@
 
   - name: Structure instances into list
     set_fact:
-      active_instances: "{{ active_instances }} + [ '{{ item['ID'] }}' ]"
+      active_instances: "{{ active_instances|default([]) }} + [ '{{ item['ID'] }}' ]"
     with_items:
     - "{{ active_instances_json }}"
 
