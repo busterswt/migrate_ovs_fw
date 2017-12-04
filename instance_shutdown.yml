@@ -30,7 +30,7 @@
   - name: Find all active instances on a given compute node
     shell: |
       source /root/openrc
-      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack server list --host '{{container_name}}' --status 'ACTIVE' -f json
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack server list --all --host '{{container_name}}' --status 'ACTIVE' -f json
     register: active_instances_json
     args:
       executable: /bin/bash
@@ -53,3 +53,14 @@
       executable: /bin/bash
     with_items:
       active_instances
+
+  - name: Wait for instances to be shutoff
+    shell: |
+      source /root/openrc
+      /openstack/venvs/nova-{{ osa_version.stdout }}/bin/openstack server list --all --status ACTIVE --host '{{container_name}}' -f json
+    register: remaining_active_instances_json
+    until: remaining_active_instances_json.stdout|length <= 2
+    retries: 18
+    delay: 10
+    args:
+      executable: /bin/bash
